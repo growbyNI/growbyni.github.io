@@ -1,0 +1,589 @@
+<!DOCTYPE html>
+<html lang="en">
+
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>Boostify Dashboard</title>
+ <script src="https://cdn.tailwindcss.com"></script>
+  <script type="module">
+    import { initializeApp } from "https://www.gstatic.com/firebasejs/10.12.0/firebase-app.js";
+    import { getDatabase, ref, get, set, push, update } from "https://www.gstatic.com/firebasejs/10.12.0/firebase-database.js";
+
+    const firebaseConfig = {
+      apiKey: "AIzaSyALsHqqsteKQSp5lFtUXsaLASE8QBeejsM",
+      authDomain: "motion-f3e7b.firebaseapp.com",
+      databaseURL: "https://motion-f3e7b-default-rtdb.firebaseio.com",
+      projectId: "motion-f3e7b",
+      storageBucket: "motion-f3e7b.firebasestorage.app",
+      messagingSenderId: "39637220542",
+      appId: "1:39637220542:web:2c1ecea0737f8f617af2ef"
+    };
+
+    const app = initializeApp(firebaseConfig);
+    const db = getDatabase(app);
+
+    const user = JSON.parse(localStorage.getItem("boostifyUser"));
+    if (!user) window.location.href = "login.html";
+
+    let balance = 0;
+    let points = 0;
+    let earnInterval;
+    let allFreeCampaigns = {};
+    let currentFilter = "Active"; // Default filter
+
+    async function loadDashboard() {
+      document.getElementById("username").innerText = user.name;
+
+      const balanceRef = ref(db, "users/" + user.uid + "/balance");
+      const snapshot = await get(balanceRef);
+      balance = snapshot.exists() ? snapshot.val() : 0;
+      document.getElementById("balance").innerText = balance.toFixed(2);
+
+      const pointsRef = ref(db, "users/" + user.uid + "/points");
+      const pointsSnap = await get(pointsRef);
+      points = pointsSnap.exists() ? pointsSnap.val() : 0;
+      document.getElementById("points").innerText = points;
+
+      loadCampaigns();
+      loadFreeCampaigns();
+    }
+
+    async function depositFunds() {
+      const amount = parseFloat(document.getElementById("depositAmount").value);
+      if (isNaN(amount) || amount <= 0) {
+        alert("Enter a valid amount");
+        return;
+      }
+      balance += amount;
+      await set(ref(db, "users/" + user.uid + "/balance"), balance);
+      document.getElementById("balance").innerText = balance.toFixed(2);
+      document.getElementById("depositAmount").value = "";
+      alert("Deposit successful!");
+    }
+
+    async function createCampaign() {
+      const name = document.getElementById("campaignName").value.trim();
+      const url = document.getElementById("campaignUrl").value.trim();
+      const budget = parseFloat(document.getElementById("campaignBudget").value);
+
+      if (!name || !url || isNaN(budget) || budget <= 0) {
+        alert("Fill in all fields with valid values");
+        return;
+      }
+
+      if (budget > balance) {
+        alert("Insufficient balance. Please deposit funds.");
+        return;
+      }
+
+      const campaign = {
+        name,
+        url,
+        budget,
+        spent: 0,
+        traffic: 0,
+        status: "Pending",
+        createdAt: new Date().toISOString()
+      };
+
+      const campaignRef = push(ref(db, "users/" + user.uid + "/campaigns"));
+      await set(campaignRef, campaign);
+
+      alert("Campaign created successfully!");
+      document.getElementById("campaignName").value = "";
+      document.getElementById("campaignUrl").value = "";
+      document.getElementById("campaignBudget").value = "";
+
+      loadCampaigns();
+    }
+
+    async function loadCampaigns() {
+      const campaignsRef = ref(db, "users/" + user.uid + "/campaigns");
+      const snapshot = await get(campaignsRef);
+      const container = document.getElementById("campaignList");
+      container.innerHTML = "";
+
+      if (!snapshot.exists()) {
+        container.innerHTML = "<p class='text-gray-400'>No campaigns yet.</p>";
+        return;
+      }
+
+      const campaigns = snapshot.val();
+      for (const key in campaigns) {
+        const c = campaigns[key];
+        const card = document.createElement("div");
+        card.className = "bg-gray-800 p-4 rounded-xl shadow-md flex flex-col gap-2";
+        card.innerHTML = `
+          <h3 class="text-lg font-bold">${c.name}</h3>
+          <p class="text-sm text-gray-300 break-words">${c.url}</p>
+          <p class="text-sm">Budget: $${c.budget.toFixed(2)}</p>
+          <p class="text-sm">Status: <span class="font-semibold">${c.status}</span></p>
+          <div class="flex gap-2 mt-2">
+            <button onclick="updateStatus('${key}', 'Active')" class="flex-1 bg-green-500 py-1 rounded">Activate</button>
+            <button onclick="updateStatus('${key}', 'Paused')" class="flex-1 bg-yellow-500 py-1 rounded">Pause</button>
+          </div>
+        `;
+        container.appendChild(card);
+      }
+    }
+
+    async function createFreeCampaign() {
+      const name = document.getElementById("freeCampaignName").value.trim();
+      const url = document.getElementById("freeCampaignUrl").value.trim();
+      const campaignPoints = parseFloat(document.getElementById("freeCampaignPoints").value);
+
+      if (!name || !url || isNaN(campaignPoints) || campaignPoints <= 0) {
+        alert("Please fill in all fields with valid values");
+        return;
+      }
+
+      if (campaignPoints > points) {
+        alert("Not enough points. Please earn more points.");
+        return;
+      }
+
+      points -= campaignPoints;
+      await set(ref(db, "users/" + user.uid + "/points"), points);
+      document.getElementById("points").innerText = points;
+
+      const campaign = {
+        name,
+        url,
+        points: campaignPoints,
+        traffic: 0,
+        createdBy: user.uid,
+        status: "Pending",
+        createdAt: new Date().toISOString()
+      };
+
+      const globalRef = push(ref(db, "freeCampaigns"));
+      await set(globalRef, campaign);
+      await set(ref(db, `users/${user.uid}/freeCampaigns/${globalRef.key}`), campaign);
+
+      alert("Free campaign added successfully!");
+      document.getElementById("freeCampaignName").value = "";
+      document.getElementById("freeCampaignUrl").value = "";
+      document.getElementById("freeCampaignPoints").value = "";
+      loadFreeCampaigns();
+    }
+
+    async function loadFreeCampaigns() {
+      const campaignsRef = ref(db, "users/" + user.uid + "/freeCampaigns");
+      const snapshot = await get(campaignsRef);
+      const container = document.getElementById("freeCampaignList");
+      container.innerHTML = "";
+
+      if (!snapshot.exists()) {
+        container.innerHTML = "<p class='text-gray-400'>No free campaigns yet.</p>";
+        return;
+      }
+
+      allFreeCampaigns = snapshot.val();
+      displayFilteredFreeCampaigns();
+    }
+
+ let displayedCount = 10; // Global variable for pagination
+
+function displayFilteredFreeCampaigns() {
+  const container = document.getElementById("freeCampaignList");
+  container.innerHTML = "";
+
+  const campaigns = Object.entries(allFreeCampaigns).filter(([key, c]) => {
+    if (currentFilter === "Active")
+      return (c.status === "Active" || c.status === "Pending") && (c.points || 0) > 0;
+    if (currentFilter === "Completed")
+      return (c.points || 0) <= 0 || c.status === "Completed";
+    return true;
+  });
+
+  if (campaigns.length === 0) {
+    container.innerHTML = `<p class='text-gray-400'>No ${currentFilter.toLowerCase()} campaigns.</p>`;
+    return;
+  }
+
+  const campaignsToShow = campaigns.slice(0, displayedCount);
+
+  for (const [key, c] of campaignsToShow) {
+    const spent = (c.traffic || 0) * 10;
+    const status = (c.points <= 0) ? "Completed" : "Active";
+
+    const card = document.createElement("div");
+    card.className = "bg-gray-800 p-4 rounded-xl shadow-md flex flex-col gap-2";
+    card.innerHTML = `
+      <h3 class="text-lg font-bold">${c.name}</h3>
+      <p class="text-sm text-gray-300 break-words">${c.url}</p>
+      <p class="text-sm">Traffic: ${c.traffic || 0}</p>
+      <p class="text-sm">Points Spent: ${spent}</p>
+      <p class="text-sm">Remaining Points: ${c.points > 0 ? c.points : 0}</p>
+      <p class="text-sm">Status:
+        <span class="font-semibold ${status === 'Completed' ? 'text-red-500' : 'text-green-400'}">${status}</span>
+      </p>
+    `;
+    container.appendChild(card);
+  }
+
+  if (campaigns.length > displayedCount) {
+    const seeMoreBtn = document.createElement("button");
+    seeMoreBtn.textContent = "See More";
+    seeMoreBtn.className = "mt-4 bg-blue-500 px-4 py-2 rounded text-white font-bold w-full";
+    seeMoreBtn.onclick = () => {
+      displayedCount += 10;
+      displayFilteredFreeCampaigns();
+    };
+    container.appendChild(seeMoreBtn);
+  }
+}
+
+// Reset displayedCount whenever filter changes
+function filterFreeCampaigns(filter) {
+  currentFilter = filter;
+  displayedCount = 10; // reset to first page
+  displayFilteredFreeCampaigns();
+
+  // Button highlight
+  const activeBtn = document.getElementById("activeBtn");
+  const completedBtn = document.getElementById("completedBtn");
+  if (filter === "Active") {
+    activeBtn.classList.add("bg-blue-500");
+    activeBtn.classList.remove("bg-gray-500");
+    completedBtn.classList.add("bg-gray-500");
+    completedBtn.classList.remove("bg-blue-500");
+  } else {
+    completedBtn.classList.add("bg-blue-500");
+    completedBtn.classList.remove("bg-gray-500");
+    activeBtn.classList.add("bg-gray-500");
+    activeBtn.classList.remove("bg-blue-500");
+  }
+}
+
+
+
+    async function earnPoints() {
+      document.getElementById("earnContainer").classList.remove("hidden");
+      document.getElementById("dashboardContainer").classList.add("hidden");
+      loadEarnFrames();
+    }
+
+let earnRefreshTimeout; // new: store the refresh timeout
+
+async function loadEarnFrames() {
+  const campaignsRef = ref(db, "freeCampaigns");
+  const snapshot = await get(campaignsRef);
+  if (!snapshot.exists()) return;
+
+  const campaigns = Object.entries(snapshot.val());
+  const filtered = campaigns.filter(([key, c]) =>
+    c.createdBy !== user.uid && c.status !== "Completed" && (c.points || 0) > 0
+  );
+  filtered.sort(() => 0.5 - Math.random());
+  const selected = filtered.slice(0, 6);
+
+  const frames = document.getElementById("earnFrames");
+  frames.innerHTML = "";
+
+  for (const [key, c] of selected) {
+    const iframe = document.createElement("iframe");
+    iframe.src = c.url;
+    iframe.className = "w-full h-40 border rounded";
+    frames.appendChild(iframe);
+
+    const newTraffic = (c.traffic || 0) + 1;
+    const remainingPoints = Math.max((c.points || 0) - 10, 0);
+    const newStatus = remainingPoints <= 0 ? "Completed" : "Active";
+
+    update(ref(db, "freeCampaigns/" + key), { traffic: newTraffic, points: remainingPoints, status: newStatus });
+    update(ref(db, `users/${c.createdBy}/freeCampaigns/${key}`), { traffic: newTraffic, points: remainingPoints, status: newStatus });
+  }
+
+  let countdown = 15;
+  document.getElementById("countdown").innerText = countdown;
+  clearInterval(earnInterval);
+  earnInterval = setInterval(async () => {
+    countdown--;
+    document.getElementById("countdown").innerText = countdown;
+    if (countdown <= 0) {
+      clearInterval(earnInterval);
+      points += selected.length * 10;
+      await set(ref(db, "users/" + user.uid + "/points"), points);
+      document.getElementById("points").innerText = points;
+
+      // Schedule next refresh
+      earnRefreshTimeout = setTimeout(loadEarnFrames, 0);
+    }
+  }, 1000);
+}
+
+function closeEarn() {
+  clearInterval(earnInterval);
+  clearTimeout(earnRefreshTimeout); // stop any scheduled refresh
+  document.getElementById("earnContainer").classList.add("hidden");
+  document.getElementById("dashboardContainer").classList.remove("hidden");
+}
+
+
+    function updateStatus(campaignId, newStatus) {
+      update(ref(db, "users/" + user.uid + "/campaigns/" + campaignId), { status: newStatus });
+      loadCampaigns();
+    }
+
+    function logout() {
+      localStorage.removeItem("boostifyUser");
+      window.location.href = "login.html";
+    }
+
+    window.updateStatus = updateStatus;
+    window.depositFunds = depositFunds;
+    window.createCampaign = createCampaign;
+    window.createFreeCampaign = createFreeCampaign;
+    window.earnPoints = earnPoints;
+    window.logout = logout;
+    window.closeEarn = closeEarn;
+    window.filterFreeCampaigns = filterFreeCampaigns;
+
+
+    window.addEventListener("DOMContentLoaded", loadDashboard);
+  </script>
+</head>
+
+<body class="bg-gray-900 text-white min-h-screen flex flex-col">
+  <div id="dashboardContainer">
+    <!-- Navbar -->
+    <nav class="flex justify-between items-center px-6 py-4 bg-black/40 backdrop-blur">
+      <h1 class="text-xl font-bold text-blue-400">Boostify</h1>
+      <div class="flex items-center gap-4">
+        <span>Hi, <span id="username"></span></span>
+        <button onclick="logout()" class="bg-red-500 px-3 py-1 rounded hover:bg-red-600">Logout</button>
+      </div>
+    </nav>
+
+   <!--  Inter ad -->
+
+    <script>
+(function(i,n,t,s,t,l){
+ i.intstl = i.intstl || function() {
+  (i.intstl.q=(i.intstl.q||[])).push(arguments)
+};
+var s=n.getElementsByTagName('head')[0];
+var q=n.createElement('script'); q.async=1;
+q.src='https://static.ezmob.com/intstl/intstl.js';
+s.appendChild(q);
+i.intstl('init', {
+ host: 'xml.qualiclicks.com',
+ feed: 841687,
+ auth : 'zyPl',
+ logo: 'https://adk.ezmob.com/images/icoLogo.png',
+ color1: '#3c8dbc', color2: '#307196',
+ textColor: 'white', background: '#f7f7f6',
+ engagementPeriod: 10,
+ interval: 12,
+defer: 10
+});
+i.intstl('show');
+})(window, document);
+</script>
+         
+
+
+
+    <!-- Stats -->
+    <div class="grid grid-cols-2 sm:grid-cols-4 gap-4 p-4">
+      <div class="bg-gray-800 p-4 rounded-lg text-center">
+        <p class="text-gray-400 text-sm">Balance</p>
+        <p class="text-xl font-bold">$<span id="balance">0.00</span></p>
+      </div>
+      <div class="bg-gray-800 p-4 rounded-lg text-center">
+        <p class="text-gray-400 text-sm">Points</p>
+        <p class="text-xl font-bold"><span id="points">0</span></p>
+      </div>
+      <div class="bg-gray-800 p-4 rounded-lg text-center">
+        <button onclick="document.getElementById('paid').classList.remove('hidden');document.getElementById('free').classList.add('hidden');"
+          class="bg-blue-500 px-3 py-1 rounded mt-2">Paid</button>
+      </div>
+      <div class="bg-gray-800 p-4 rounded-lg text-center">
+        <button onclick="document.getElementById('free').classList.remove('hidden');document.getElementById('paid').classList.add('hidden');"
+          class="bg-green-500 px-3 py-1 rounded mt-2">Free</button>
+      </div>
+    </div>
+
+    <!-- Paid Campaigns -->
+    <div id="paid" class="p-4 space-y-4">
+      <section class="bg-gray-800 p-4 rounded-lg">
+        <h2 class="text-lg font-semibold mb-2">Deposit Funds</h2>
+        <div class="flex gap-2">
+          <input id="depositAmount" type="number" placeholder="Amount in USD"
+            class="flex-1 px-3 py-2 bg-gray-700 rounded text-white">
+          <button onclick="depositFunds()" class="bg-blue-500 px-4 py-2 rounded">Deposit</button>
+        </div>
+      </section>
+
+      <section class="bg-gray-800 p-4 rounded-lg">
+        <h2 class="text-lg font-semibold mb-2">Create Paid Campaign</h2>
+        <div class="grid grid-cols-1 sm:grid-cols-3 gap-2">
+          <input id="campaignName" type="text" placeholder="Campaign Name"
+            class="px-3 py-2 bg-gray-700 rounded text-white">
+          <input id="campaignUrl" type="url" placeholder="Target URL"
+            class="px-3 py-2 bg-gray-700 rounded text-white">
+          <input id="campaignBudget" type="number" placeholder="Budget"
+            class="px-3 py-2 bg-gray-700 rounded text-white">
+        </div>
+        <button onclick="createCampaign()" class="mt-3 bg-green-500 px-4 py-2 rounded">Create Campaign</button>
+      </section>
+
+      <div id="campaignList" class="grid gap-4"></div>
+    </div>
+
+
+    <!-- Free Campaigns -->
+
+
+    <div id="free" class="hidden p-4 space-y-4">
+        
+    <div class="text-center">
+        <div class="text-center space-y-4">
+  <button onclick="earnPoints()" class="bg-yellow-500 px-6 py-2 rounded text-black font-bold">Earn Points</button>
+  
+  <!-- New Watch Ad Button -->
+  <button id="watchAdBtn" onclick="watchAd()"
+    class="bg-purple-500 px-6 py-2 rounded text-white font-bold">
+    Watch Ad & Earn 200 Points
+  </button>
+</div>
+
+<script>
+const adUrl = "https://www.profitableratecpm.com/bzcdgby3k?key=87dc6e950e50ad16fc21406ff2001171";
+
+function watchAd() {
+  const lastClick = localStorage.getItem("lastWatchAd");
+  const now = Date.now();
+
+  // Check if 1 minute has passed
+  if (lastClick && now - parseInt(lastClick) < 1 * 60 * 1000) {
+    alert("Please wait 1 minute before watching another ad.");
+    return;
+  }
+
+  // Save time and disable button
+  localStorage.setItem("lastWatchAd", now);
+  disableWatchAdBtn();
+
+  // Open ad first
+  window.open(adUrl, "_blank");
+
+  // Then reload page with returning flag
+  localStorage.setItem("returningFromAd", "true");
+  setTimeout(() => {
+    window.location.href = window.location.origin + window.location.pathname + "?returningFromAd=true";
+  }, 300); // small delay ensures ad tab opens
+}
+
+// Handle return from ad
+window.addEventListener("DOMContentLoaded", async () => {
+  const urlParams = new URLSearchParams(window.location.search);
+  if (urlParams.has("returningFromAd") && localStorage.getItem("returningFromAd") === "true") {
+    localStorage.removeItem("returningFromAd");
+
+    // Wait 20 seconds before crediting points
+    setTimeout(async () => {
+      points += 200;
+      await set(ref(db, "users/" + user.uid + "/points"), points);
+      document.getElementById("points").innerText = points;
+      alert("You earned 200 points!");
+    }, 20000);
+  }
+
+  disableWatchAdBtn();
+});
+
+// Function to disable the button if within 1 minute
+function disableWatchAdBtn() {
+  const lastClick = localStorage.getItem("lastWatchAd");
+  if (lastClick && Date.now() - parseInt(lastClick) < 1 * 60 * 1000) {
+    const btn = document.getElementById("watchAdBtn");
+    btn.disabled = true;
+    btn.classList.add("opacity-50");
+
+    // Re-enable after remaining time
+    const remaining = 1 * 60 * 1000 - (Date.now() - parseInt(lastClick));
+    setTimeout(() => {
+      btn.disabled = false;
+      btn.classList.remove("opacity-50");
+    }, remaining);
+  }
+}
+</script>
+
+
+      </div>
+      <section class="bg-gray-800 p-4 rounded-lg">
+        <h2 class="text-lg font-semibold mb-2">Add Free Campaign</h2>
+        <div class="grid grid-cols-1 sm:grid-cols-3 gap-2">
+          <input id="freeCampaignName" type="text" placeholder="Campaign Name"
+            class="px-3 py-2 bg-gray-700 rounded text-white">
+          <input id="freeCampaignUrl" type="url" placeholder="Target URL"
+            class="px-3 py-2 bg-gray-700 rounded text-white">
+          <input id="freeCampaignPoints" type="number" placeholder="Points"
+            class="px-3 py-2 bg-gray-700 rounded text-white">
+        </div>
+        <button onclick="createFreeCampaign()" class="mt-3 bg-green-500 px-4 py-2 rounded">Add Campaign</button>
+      </section>
+
+
+
+      <div class="flex justify-center gap-4 mb-4">
+        <button onclick="filterFreeCampaigns('Active')" id="activeBtn"
+  class="bg-blue-500 px-4 py-2 rounded text-white font-bold">Active Campaigns</button>
+<button onclick="filterFreeCampaigns('Completed')" id="completedBtn"
+  class="bg-gray-500 px-4 py-2 rounded text-white font-bold">Completed Campaigns</button>
+</div>
+
+                                
+      <div id="freeCampaignList" class="grid gap-4"></div>
+
+      
+    </div>
+  </div>
+
+  <!-- Earn Points Fullscreen Container -->
+  <div id="earnContainer" class="hidden fixed inset-0 bg-gray-900 text-white flex flex-col p-4 z-50">
+    <div class="flex justify-between items-center mb-4">
+      <h2 class="text-lg font-bold">Earn Points</h2>
+      <button onclick="closeEarn()" class="bg-red-500 px-3 py-1 rounded">Back</button>
+    </div>
+    <div id="earnFrames" class="grid grid-cols-1 sm:grid-cols-2 md:grid-cols-3 gap-4 flex-1 overflow-auto"></div>
+    <div class="text-center mt-4 text-xl font-bold">
+      Next refresh in <span id="countdown">15</span> seconds
+    </div>
+  </div>
+
+  <!--  IN-page ad -->
+
+  <script>
+(function(i,n,p,a,g,e){
+i.inpagepush = i.inpagepush || function() {
+(i.inpagepush.q=(i.inpagepush.q||[])).push(arguments)
+};
+var s=n.getElementsByTagName('head')[0];
+var q=n.createElement('script'); q.async=1;
+q.src='//static.ezmob.com/inpage/inpage.js';
+s.appendChild(q);
+i.inpagepush('init', {
+host: 'xml.qualiclicks.com',
+feed: 841687,
+auth : 'zyPl',
+subid: 'site1',
+refresh: 90,
+position: 'bottom',
+position_mobile: 'bottom',
+slots: 1,
+query : '',
+nodesrc : true
+});
+i.inpagepush('show');
+})(window, document);
+</script>
+
+                                
+</body>
+
+</html>

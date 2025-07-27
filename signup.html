@@ -1,0 +1,163 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Create Account - Boostify</title>
+  <script src="https://cdn.tailwindcss.com"></script>
+  <style>
+    .loader {
+      border: 3px solid rgba(255, 255, 255, 0.3);
+      border-top: 3px solid #3b82f6;
+      border-radius: 50%;
+      width: 20px;
+      height: 20px;
+      animation: spin 0.8s linear infinite;
+      display: none;
+      margin-left: 10px;
+    }
+    @keyframes spin {
+      0% { transform: rotate(0deg); }
+      100% { transform: rotate(360deg); }
+    }
+    #customAlert {
+      display: none;
+      position: fixed;
+      top: 50%;
+      left: 50%;
+      transform: translate(-50%, -50%);
+      background: #1f2937;
+      color: white;
+      padding: 20px 30px;
+      border-radius: 12px;
+      box-shadow: 0 5px 15px rgba(0,0,0,0.5);
+      text-align: center;
+      z-index: 50;
+      max-width: 300px;
+    }
+    #customAlert button {
+      margin-top: 10px;
+      background: #3b82f6;
+      padding: 8px 16px;
+      border: none;
+      border-radius: 8px;
+      cursor: pointer;
+    }
+    #overlay {
+      display: none;
+      position: fixed;
+      top: 0;
+      left: 0;
+      width: 100%;
+      height: 100%;
+      background: rgba(0,0,0,0.5);
+      z-index: 40;
+    }
+  </style>
+  <script type="module">
+    import { initializeApp } from "https://www.gstatic.com/firebasejs/10.12.0/firebase-app.js";
+    import { getAuth, createUserWithEmailAndPassword, updateProfile } from "https://www.gstatic.com/firebasejs/10.12.0/firebase-auth.js";
+    import { getDatabase, ref, set } from "https://www.gstatic.com/firebasejs/10.12.0/firebase-database.js";
+
+    const firebaseConfig = {
+      apiKey: "AIzaSyALsHqqsteKQSp5lFtUXsaLASE8QBeejsM",
+      authDomain: "motion-f3e7b.firebaseapp.com",
+      databaseURL: "https://motion-f3e7b-default-rtdb.firebaseio.com",
+      projectId: "motion-f3e7b",
+      storageBucket: "motion-f3e7b.firebasestorage.app",
+      messagingSenderId: "39637220542",
+      appId: "1:39637220542:web:2c1ecea0737f8f617af2ef"
+    };
+
+    const app = initializeApp(firebaseConfig);
+    const auth = getAuth(app);
+    const db = getDatabase(app);
+
+    function showAlert(message) {
+      document.getElementById('alertMessage').innerText = message;
+      document.getElementById('overlay').style.display = 'block';
+      document.getElementById('customAlert').style.display = 'block';
+      document.getElementById('alertBtn').onclick = () => {
+        document.getElementById('overlay').style.display = 'none';
+        document.getElementById('customAlert').style.display = 'none';
+      };
+    }
+
+    async function registerUser() {
+      const btn = document.getElementById("submitBtn");
+      const loader = document.querySelector(".loader");
+      btn.disabled = true;
+      loader.style.display = "inline-block";
+
+      const name = document.getElementById('name').value.trim();
+      const email = document.getElementById('email').value.trim();
+      const password = document.getElementById('password').value.trim();
+      const logo = "https://encrypted-tbn0.gstatic.com/images?q=tbn:ANd9GcSN9lZxcVeTkoj27911KSV__OmKqgFRYhMTUw&s";
+
+      if (!name || !email || !password) {
+        showAlert("Please fill in all fields!");
+        btn.disabled = false;
+        loader.style.display = "none";
+        return;
+      }
+
+      try {
+        const userCredential = await createUserWithEmailAndPassword(auth, email, password);
+        const user = userCredential.user;
+
+        await updateProfile(user, { displayName: name });
+
+        await set(ref(db, 'users/' + user.uid), {
+          username: name,
+          email: email,
+          logo: logo,
+          createdAt: new Date().toISOString()
+        });
+
+        showAlert("✅ Account created successfully! Please login.");
+        btn.disabled = false;
+        loader.style.display = "none";
+
+        setTimeout(() => {
+          window.location.href = "login.html";
+        }, 2000);
+      } catch (error) {
+        btn.disabled = false;
+        loader.style.display = "none";
+        showAlert("Error: " + error.message);
+      }
+    }
+
+    window.registerUser = registerUser;
+  </script>
+</head>
+<body class="bg-gradient-to-br from-gray-900 via-black to-gray-800 text-white min-h-screen flex items-center justify-center">
+
+  <div id="overlay"></div>
+  <div id="customAlert">
+    <p id="alertMessage"></p>
+    <button id="alertBtn">OK</button>
+  </div>
+
+  <div class="bg-gray-800 p-8 rounded-2xl shadow-lg w-full max-w-md">
+    <h2 class="text-3xl font-bold text-center mb-6 text-blue-400">Create Your Account</h2>
+
+    <form id="signup-form" class="space-y-4" onsubmit="event.preventDefault(); registerUser();">
+      <input id="name" type="text" placeholder="Full Name" class="w-full px-4 py-2 rounded-lg bg-gray-700 text-white focus:outline-none focus:ring-2 focus:ring-blue-500" required>
+      <input id="email" type="email" placeholder="Email Address" class="w-full px-4 py-2 rounded-lg bg-gray-700 text-white focus:outline-none focus:ring-2 focus:ring-blue-500" required>
+      <input id="password" type="password" placeholder="Password" class="w-full px-4 py-2 rounded-lg bg-gray-700 text-white focus:outline-none focus:ring-2 focus:ring-blue-500" required>
+
+      <button id="submitBtn" type="submit"
+        class="w-full flex items-center justify-center bg-blue-500 hover:bg-blue-600 py-2 rounded-lg font-semibold transition">
+        Create Account
+        <div class="loader"></div>
+      </button>
+    </form>
+
+    <p class="text-center text-gray-400 mt-4">
+      Already have an account? <a href="login.html" class="text-blue-400 hover:underline">Login</a>
+    </p>
+  </div>
+
+</body>
+</html>
